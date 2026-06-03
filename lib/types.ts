@@ -22,9 +22,11 @@ export interface Module {
   tags: string[];
 }
 
-export interface DirectorEmailPayload {
+export interface AppSettings {
+  resendApiKey: string;
+  fromEmail: string;
+  fromName: string;
   directorEmail: string;
+  ccEmails: string;
   senderName: string;
-  customNote: string;
-  modules: Module[];
 }

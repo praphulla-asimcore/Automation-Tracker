@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Module, TaskStatus } from "@/lib/types";
+import { Module, TaskStatus, AppSettings } from "@/lib/types";
 import { INITIAL_MODULES, PHASE_LABELS, PHASE_DATES, PHASE_COLORS } from "@/lib/data";
 import Header from "@/components/Header";
 import StatsBar from "@/components/StatsBar";
@@ -10,26 +10,15 @@ import UpdateDirectorModal from "@/components/UpdateDirectorModal";
 import SettingsModal from "@/components/SettingsModal";
 
 const STORAGE_KEY = "hexa-automation-tracker-v1";
-const SETTINGS_KEY = "hexa-automation-settings-v1";
-
-export interface AppSettings {
-  directorEmail: string;
-  senderName: string;
-  smtpHost: string;
-  smtpPort: string;
-  smtpUser: string;
-  smtpPass: string;
-  smtpSecure: boolean;
-}
+const SETTINGS_KEY = "hexa-automation-settings-v2";
 
 const DEFAULT_SETTINGS: AppSettings = {
+  resendApiKey: "",
+  fromEmail: "noreply@hexamatics.finance",
+  fromName: "Hexa Finance Tracker",
   directorEmail: "",
+  ccEmails: "",
   senderName: "Asim",
-  smtpHost: "smtp.gmail.com",
-  smtpPort: "587",
-  smtpUser: "",
-  smtpPass: "",
-  smtpSecure: false,
 };
 
 export default function Home() {
