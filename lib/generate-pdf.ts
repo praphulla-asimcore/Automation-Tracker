@@ -1,277 +1,412 @@
+/**
+ * generateProgressPDF — fully manual jsPDF layout, no autoTable.
+ * Every rect, text and bar is drawn at an explicit coordinate so nothing
+ * can overlap or mis-align regardless of content length.
+ */
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import { Module } from "./types";
 
-const PINK   = [233, 30, 140]  as [number, number, number];
-const PURPLE = [156, 39, 176]  as [number, number, number];
-const BLUE   = [21,  101, 192] as [number, number, number];
-const DARK   = [26,  26,  46]  as [number, number, number];
-const LIGHT  = [248, 249, 252] as [number, number, number];
+// ─── palette ────────────────────────────────────────────────────────────────
+type RGB = [number, number, number];
 
-const PHASE_COLORS: Record<number, [number, number, number]> = {
-  1: PINK, 2: PURPLE, 3: BLUE, 4: [13, 71, 161],
+const C: Record<string, RGB> = {
+  navy:    [15,  23,  42],
+  white:   [255, 255, 255],
+  bg:      [248, 249, 252],
+  lgray:   [229, 231, 235],
+  mgray:   [156, 163, 175],
+  dgray:   [107, 114, 128],
+  pink:    [233,  30, 140],
+  purple:  [156,  39, 176],
+  blue:    [ 21, 101, 192],
+  indigo:  [ 13,  71, 161],
+  green:   [ 22, 163,  74],
+  red:     [220,  38,  38],
+  amber:   [146,  64,  14],
+  amberBg: [255, 251, 235],
 };
-const PHASE_NAMES: Record<number, string> = {
-  1: "Phase 1 — CSI Operations (3–9 Jun)",
-  2: "Phase 2 — AP & Controls (10–17 Jun)",
-  3: "Phase 3 — ARIA & Fund Flow (18–24 Jun)",
-  4: "Phase 4 — Consolidation (25 Jun–7 Jul)",
+
+const PHASE_COLOR: Record<number, RGB> = {
+  1: C.pink, 2: C.purple, 3: C.blue, 4: C.indigo,
+};
+const PHASE_NAME: Record<number, string> = {
+  1: "Phase 1 — CSI Operations",
+  2: "Phase 2 — AP & Controls",
+  3: "Phase 3 — ARIA & Fund Flow",
+  4: "Phase 4 — Consolidation",
+};
+const PHASE_DATE: Record<number, string> = {
+  1: "3–9 Jun 2026",
+  2: "10–17 Jun 2026",
+  3: "18–24 Jun 2026",
+  4: "25 Jun–7 Jul 2026",
 };
 
 function statusText(s: string) {
-  switch (s) {
-    case "completed":  return "Completed";
-    case "in_progress": return "In Progress";
-    case "blocked":    return "Blocked";
-    default:           return "Not Started";
-  }
+  if (s === "completed")  return "Completed";
+  if (s === "in_progress") return "In Progress";
+  if (s === "blocked")    return "Blocked";
+  return "Not Started";
 }
-function statusColor(s: string): [number, number, number] {
-  switch (s) {
-    case "completed":  return [22, 163, 74];
-    case "in_progress": return [37, 99, 235];
-    case "blocked":    return [220, 38, 38];
-    default:           return [107, 114, 128];
-  }
+function statusFg(s: string): RGB {
+  if (s === "completed")  return C.green;
+  if (s === "in_progress") return C.blue;
+  if (s === "blocked")    return C.red;
+  return C.dgray;
 }
-
-function lerpColor(a: number[], b: number[], t: number): [number, number, number] {
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * t),
-    Math.round(a[1] + (b[1] - a[1]) * t),
-    Math.round(a[2] + (b[2] - a[2]) * t),
-  ];
+function statusBg(s: string): RGB {
+  if (s === "completed")  return [220, 252, 231];
+  if (s === "in_progress") return [219, 234, 254];
+  if (s === "blocked")    return [254, 226, 226];
+  return [243, 244, 246];
 }
 
-function drawGradientBar(doc: jsPDF, x: number, y: number, w: number, h: number) {
-  const steps = 40;
-  for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1);
-    const col = t < 0.5 ? lerpColor(PINK, PURPLE, t * 2) : lerpColor(PURPLE, BLUE, (t - 0.5) * 2);
-    doc.setFillColor(col[0], col[1], col[2]);
-    doc.rect(x + (w / steps) * i, y, w / steps + 0.5, h, "F");
-  }
+// ─── helpers ────────────────────────────────────────────────────────────────
+function fill(doc: jsPDF, c: RGB)  { doc.setFillColor  (c[0], c[1], c[2]); }
+function stroke(doc: jsPDF, c: RGB){ doc.setDrawColor  (c[0], c[1], c[2]); }
+function color(doc: jsPDF, c: RGB) { doc.setTextColor  (c[0], c[1], c[2]); }
+function bold  (doc: jsPDF, sz: number) { doc.setFont("helvetica","bold");   doc.setFontSize(sz); }
+function normal(doc: jsPDF, sz: number) { doc.setFont("helvetica","normal"); doc.setFontSize(sz); }
+
+function roundRect(doc: jsPDF, x: number, y: number, w: number, h: number, r: number, style: "F"|"S"|"FD" = "F") {
+  doc.roundedRect(x, y, w, h, r, r, style);
 }
 
-function drawProgressBar(
-  doc: jsPDF,
-  x: number, y: number,
-  totalW: number, h: number,
-  pct: number,
-  color: [number, number, number]
-) {
-  doc.setFillColor(229, 231, 235);
-  doc.roundedRect(x, y, totalW, h, h / 2, h / 2, "F");
+function progressBar(doc: jsPDF, x: number, y: number, w: number, h: number, pct: number, fg: RGB) {
+  fill(doc, C.lgray);
+  roundRect(doc, x, y, w, h, h / 2);
   if (pct > 0) {
-    const filled = (pct / 100) * totalW;
-    doc.setFillColor(color[0], color[1], color[2]);
-    doc.roundedRect(x, y, Math.max(filled, h), h, h / 2, h / 2, "F");
+    fill(doc, fg);
+    roundRect(doc, x, y, Math.max((pct / 100) * w, h), h, h / 2);
   }
 }
 
-export function generateProgressPDF(
-  modules: Module[],
-  senderName: string,
-  customNote: string
-) {
+// ─── page constants ──────────────────────────────────────────────────────────
+const PW = 210, PH = 297;
+const ML = 14, MR = 14;         // left / right margin
+const CW = PW - ML - MR;        // 182 mm content width
+
+// Column layout (all x values are absolute, from left edge of page)
+// | ID(9) | gap(1) | Title(97) | gap(2) | Bar(44) | gap(2) | Status(27) |
+// 9+1+97+2+44+2+27 = 182 = CW ✓
+const COL = {
+  id:     { x: ML,          w: 9  },
+  title:  { x: ML + 10,     w: 97 },
+  bar:    { x: ML + 110,    w: 44 },
+  status: { x: ML + 156,    w: 26 },
+};
+
+const FOOTER_H = 11;
+const SAFE_BOTTOM = PH - FOOTER_H - 4; // last safe y before footer
+
+// ─── footer ─────────────────────────────────────────────────────────────────
+function drawFooter(doc: jsPDF, pageNum: number, totalPages: number) {
+  fill(doc, C.navy);
+  doc.rect(0, PH - FOOTER_H, PW, FOOTER_H, "F");
+  // pink left strip
+  fill(doc, C.pink);
+  doc.rect(0, PH - FOOTER_H, 3, FOOTER_H, "F");
+  normal(doc, 6.5);
+  color(doc, [160, 170, 200]);
+  doc.text(
+    `Hexa Finance Automation Tracker  ·  Generated ${new Date().toLocaleDateString("en-GB")}  ·  Commercial in Confidence`,
+    PW / 2, PH - 3.5,
+    { align: "center" }
+  );
+  doc.text(`Page ${pageNum} of ${totalPages}`, PW - MR, PH - 3.5, { align: "right" });
+}
+
+// ─── column-header row ──────────────────────────────────────────────────────
+function drawColHeaders(doc: jsPDF, y: number) {
+  fill(doc, C.navy);
+  doc.rect(ML, y, CW, 7, "F");
+  bold(doc, 6.5);
+  color(doc, [160, 170, 200]);
+  doc.text("#",        COL.id.x     + COL.id.w / 2,       y + 4.7, { align: "center" });
+  doc.text("MODULE",   COL.title.x  + 2,                   y + 4.7);
+  doc.text("PROGRESS", COL.bar.x    + COL.bar.w / 2,       y + 4.7, { align: "center" });
+  doc.text("STATUS",   COL.status.x + COL.status.w / 2,    y + 4.7, { align: "center" });
+  return y + 7;
+}
+
+// ─── main export ─────────────────────────────────────────────────────────────
+export function generateProgressPDF(modules: Module[], senderName: string, customNote: string) {
+  // pre-calculate how many pages we'll need (rough pass)
+  // We'll do a two-pass approach: first pass collects rows, second draws
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const PW = 210, PH = 297;
-  const ML = 15, MR = 15;
-  const CW = PW - ML - MR;
 
-  /* ── COVER HEADER ── */
-  drawGradientBar(doc, 0, 0, PW, 42);
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.text("HEXA FINANCE", ML, 12);
-
-  doc.setFontSize(18);
-  doc.text("Automation Tracker — Progress Report", ML, 22);
-
-  const now = new Date().toLocaleDateString("en-GB", {
-    weekday: "long", year: "numeric", month: "long", day: "numeric",
-  });
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "normal");
-  doc.text(now, ML, 30);
-  doc.text(`Prepared by: ${senderName}`, ML, 36);
-
-  // Overall % pill (top-right)
-  const overall = Math.round(modules.reduce((s, m) => s + m.progress, 0) / modules.length);
-  doc.setFillColor(255, 255, 255, 0.18);
-  doc.roundedRect(PW - MR - 28, 8, 28, 22, 4, 4, "F");
-  doc.setFontSize(20);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(255, 255, 255);
-  doc.text(`${overall}%`, PW - MR - 14, 23, { align: "center" });
-  doc.setFontSize(7);
-  doc.setFont("helvetica", "normal");
-  doc.text("Overall", PW - MR - 14, 28, { align: "center" });
-
-  /* ── STATS ROW ── */
+  const overall    = Math.round(modules.reduce((s, m) => s + m.progress, 0) / modules.length);
   const completed  = modules.filter((m) => m.status === "completed").length;
   const inProgress = modules.filter((m) => m.status === "in_progress").length;
   const blocked    = modules.filter((m) => m.status === "blocked").length;
   const notStarted = modules.length - completed - inProgress - blocked;
 
-  let statY = 48;
-  const stats = [
-    { label: "Completed",   value: completed,  color: [22, 163, 74] as [number,number,number] },
-    { label: "In Progress", value: inProgress, color: [37, 99, 235] as [number,number,number] },
-    { label: "Blocked",     value: blocked,    color: [220, 38, 38] as [number,number,number] },
-    { label: "Not Started", value: notStarted, color: [107,114,128] as [number,number,number] },
-  ];
-  const cardW = CW / 4 - 2;
-  stats.forEach((s, i) => {
-    const cx = ML + i * (cardW + 2.66);
-    doc.setFillColor(...LIGHT);
-    doc.roundedRect(cx, statY, cardW, 16, 3, 3, "F");
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(...s.color);
-    doc.text(String(s.value), cx + cardW / 2, statY + 9, { align: "center" });
-    doc.setFontSize(7);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(107, 114, 128);
-    doc.text(s.label.toUpperCase(), cx + cardW / 2, statY + 14, { align: "center" });
+  const dateStr = new Date().toLocaleDateString("en-GB", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 
-  /* ── TARGET BANNER ── */
-  const bannerY = statY + 20;
-  drawGradientBar(doc, ML, bannerY, CW, 8);
-  doc.setFontSize(7);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(255, 255, 255);
-  doc.text("Target: 7 July 2026  ·  13 Modules  ·  4 Phases", ML + 2, bannerY + 5.5);
+  // ── PAGE 1: HEADER ────────────────────────────────────────────────────────
+  // Dark header block
+  fill(doc, C.navy);
+  doc.rect(0, 0, PW, 42, "F");
+  // Pink left accent
+  fill(doc, C.pink);
+  doc.rect(0, 0, 3, 42, "F");
 
-  // Overall progress bar
-  const pbY = bannerY + 12;
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(...DARK);
-  doc.text("Overall Progress", ML, pbY + 3.5);
-  drawGradientBar(doc, ML + 38, pbY, CW - 50, 5);
-  // white overlay to show empty portion
-  doc.setFillColor(...LIGHT);
-  doc.rect(ML + 38 + ((CW - 50) * overall) / 100, pbY, (CW - 50) * (1 - overall / 100), 5, "F");
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(...DARK);
-  doc.text(`${overall}%`, PW - MR, pbY + 3.5, { align: "right" });
+  // Top label
+  normal(doc, 7);
+  color(doc, [120, 130, 170]);
+  doc.text("HEXA FINANCE  ·  AUTOMATION TRACKER  ·  CONFIDENTIAL", ML + 4, 10);
 
-  /* ── CUSTOM NOTE ── */
-  let curY = pbY + 14;
+  // Title
+  bold(doc, 17);
+  color(doc, C.white);
+  doc.text("Progress Report", ML + 4, 21);
+
+  // Date & sender
+  normal(doc, 8);
+  color(doc, [160, 170, 210]);
+  doc.text(dateStr, ML + 4, 29);
+  doc.text(`Prepared by: ${senderName}  ·  Target: 7 July 2026`, ML + 4, 35.5);
+
+  // Overall % badge (top-right)
+  fill(doc, C.pink);
+  roundRect(doc, PW - MR - 26, 6, 26, 24, 4);
+  bold(doc, 17);
+  color(doc, C.white);
+  doc.text(`${overall}%`, PW - MR - 13, 20, { align: "center" });
+  normal(doc, 7);
+  color(doc, [220, 200, 230]);
+  doc.text("OVERALL", PW - MR - 13, 26.5, { align: "center" });
+
+  // ── STATS CARDS ──────────────────────────────────────────────────────────
+  let y = 47;
+  const statsData = [
+    { label: "Completed",   value: completed,      fg: C.green  },
+    { label: "In Progress", value: inProgress,     fg: C.blue   },
+    { label: "Blocked",     value: blocked,        fg: C.red    },
+    { label: "Not Started", value: notStarted,     fg: C.dgray  },
+    { label: "Total",       value: modules.length, fg: C.purple },
+  ];
+  const cW = (CW - 4) / 5;  // card width
+  statsData.forEach((s, i) => {
+    const cx = ML + i * (cW + 1);
+    fill(doc, C.bg);
+    roundRect(doc, cx, y, cW, 17, 3);
+    // value
+    bold(doc, 13);
+    color(doc, s.fg);
+    doc.text(String(s.value), cx + cW / 2, y + 9.5, { align: "center" });
+    // label
+    normal(doc, 6.5);
+    color(doc, C.dgray);
+    doc.text(s.label.toUpperCase(), cx + cW / 2, y + 14.5, { align: "center" });
+  });
+
+  // ── OVERALL PROGRESS BAR ─────────────────────────────────────────────────
+  y += 22;
+  bold(doc, 7.5);
+  color(doc, C.dgray);
+  doc.text("OVERALL PROGRESS", ML, y + 4);
+  // bar
+  const pbX = ML + 40, pbW = CW - 52, pbH = 4.5;
+  progressBar(doc, pbX, y, pbW, pbH, overall, C.pink);
+  // % label
+  bold(doc, 8.5);
+  color(doc, C.pink);
+  doc.text(`${overall}%`, PW - MR, y + pbH - 0.5, { align: "right" });
+  // target label
+  normal(doc, 6.5);
+  color(doc, C.mgray);
+  doc.text("0%", pbX, y + pbH + 4);
+  doc.text("100% — 7 Jul 2026", pbX + pbW, y + pbH + 4, { align: "right" });
+
+  // ── OPTIONAL NOTE ────────────────────────────────────────────────────────
+  y += 16;
   if (customNote) {
-    doc.setFillColor(255, 251, 235);
-    doc.roundedRect(ML, curY, CW, 12, 2, 2, "F");
-    doc.setFontSize(7);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(146, 64, 14);
-    doc.text("NOTE:", ML + 3, curY + 5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(120, 53, 15);
-    const noteLines = doc.splitTextToSize(customNote, CW - 20);
-    doc.text(noteLines[0], ML + 14, curY + 5);
-    curY += 16;
+    const noteLines = doc.splitTextToSize(customNote, CW - 22);
+    const noteH = 7 + noteLines.length * 4;
+    fill(doc, C.amberBg);
+    roundRect(doc, ML, y, CW, noteH, 2.5);
+    stroke(doc, [253, 211, 100]);
+    doc.setLineWidth(0.3);
+    roundRect(doc, ML, y, CW, noteH, 2.5, "S");
+    // left bar
+    fill(doc, [245, 158, 11]);
+    roundRect(doc, ML, y, 3, noteH, 1.5);
+    bold(doc, 7);
+    color(doc, C.amber);
+    doc.text("NOTE", ML + 6, y + 5.5);
+    normal(doc, 7.5);
+    color(doc, [120, 53, 15]);
+    doc.text(noteLines, ML + 6, y + 10);
+    y += noteH + 5;
   }
 
-  /* ── MODULE TABLE ── */
+  // ── COLUMN HEADERS ───────────────────────────────────────────────────────
+  y += 3;
+  y = drawColHeaders(doc, y);
+
+  // ── MODULE ROWS ──────────────────────────────────────────────────────────
   const grouped: Record<number, Module[]> = { 1: [], 2: [], 3: [], 4: [] };
   modules.forEach((m) => grouped[m.phase].push(m));
+
+  let pageCount = 1;
+  let rowAlt = false; // alternating row shading
 
   for (const phase of [1, 2, 3, 4] as const) {
     const ms = grouped[phase];
     if (!ms.length) continue;
 
-    // Phase heading
-    autoTable(doc, {
-      startY: curY,
-      margin: { left: ML, right: MR },
-      head: [[{ content: PHASE_NAMES[phase], colSpan: 4 }]],
-      body: [],
-      headStyles: {
-        fillColor: PHASE_COLORS[phase],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        fontSize: 8,
-      },
-      theme: "plain",
-    });
-    curY = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+    const pc = PHASE_COLOR[phase];
+    const phaseDone = ms.filter((m) => m.status === "completed").length;
+
+    // Check space for phase header + at least 1 row (phase header ~8 + row ~16 = 24)
+    if (y + 24 > SAFE_BOTTOM) {
+      drawFooter(doc, pageCount, pageCount); // placeholder total, update later
+      doc.addPage();
+      pageCount++;
+      y = 14;
+      rowAlt = false;
+      y = drawColHeaders(doc, y);
+    }
+
+    // Phase header row
+    fill(doc, pc);
+    doc.rect(ML, y, CW, 8, "F");
+    bold(doc, 7.5);
+    color(doc, C.white);
+    doc.text(
+      `${PHASE_NAME[phase]}   ·   ${PHASE_DATE[phase]}`,
+      ML + 4, y + 5.5
+    );
+    normal(doc, 7);
+    doc.text(`${phaseDone}/${ms.length} complete`, PW - MR - 1, y + 5.5, { align: "right" });
+    y += 8;
 
     // Module rows
-    const tableBody = ms.map((m) => {
-      const done = m.subTasks.filter((t) => t.completed).length;
-      return [
-        String(m.id),
-        { content: m.title, styles: { fontStyle: "bold" as const } },
-        `${m.progress}%\n${done}/${m.subTasks.length}`,
-        statusText(m.status),
-      ];
-    });
+    for (const m of ms) {
+      // Calculate row height based on title length
+      const titleLines = doc.splitTextToSize(m.title, COL.title.w - 2);
+      const metaText   = `${m.dates}  ·  ${m.owner}`;
+      const hasNote    = !!m.notes;
+      // base: 4 top pad + title lines + 4 meta + (3.5 if note) + 4 bottom pad
+      const rowH = Math.max(
+        16,
+        4 + titleLines.length * 4.5 + 4.5 + (hasNote ? 4 : 0) + 4
+      );
 
-    autoTable(doc, {
-      startY: curY,
-      margin: { left: ML, right: MR },
-      head: [["#", "Module", "Progress", "Status"]],
-      body: tableBody,
-      columnStyles: {
-        0: { cellWidth: 8,  halign: "center" as const, textColor: [156, 163, 175] },
-        1: { cellWidth: 100 },
-        2: { cellWidth: 20, halign: "center" as const },
-        3: { cellWidth: 32, halign: "center" as const },
-      },
-      headStyles: {
-        fillColor: LIGHT,
-        textColor: [107, 114, 128],
-        fontStyle: "bold",
-        fontSize: 7,
-      },
-      bodyStyles: { fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 } },
-      alternateRowStyles: { fillColor: [252, 252, 253] },
-      theme: "grid",
-      // Draw progress bars and colour status badges inside cells
-      didDrawCell(data) {
-        if (data.section === "body") {
-          const m = ms[data.row.index];
-          // Progress bar (col 2)
-          if (data.column.index === 2 && m) {
-            const { x, y, width, height } = data.cell;
-            const bY = y + height / 2 - 1.5;
-            drawProgressBar(doc, x + 2, bY, width - 4, 3, m.progress, PHASE_COLORS[phase]);
-          }
-          // Status badge (col 3)
-          if (data.column.index === 3 && m) {
-            const sc = statusColor(m.status);
-            doc.setTextColor(...sc);
-          }
-        }
-      },
-    });
+      // Page break if needed
+      if (y + rowH > SAFE_BOTTOM) {
+        drawFooter(doc, pageCount, pageCount);
+        doc.addPage();
+        pageCount++;
+        y = 14;
+        rowAlt = false;
+        y = drawColHeaders(doc, y);
+        // Re-draw phase header for context
+        fill(doc, pc);
+        doc.rect(ML, y, CW, 7, "F");
+        bold(doc, 7);
+        color(doc, C.white);
+        doc.text(`${PHASE_NAME[phase]} (continued)`, ML + 4, y + 5);
+        y += 7;
+      }
 
-    curY = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
+      // Row background
+      if (rowAlt) {
+        fill(doc, C.bg);
+        doc.rect(ML, y, CW, rowH, "F");
+      }
+      rowAlt = !rowAlt;
 
-    // Add page if close to bottom
-    if (curY > PH - 25 && phase < 4) {
-      doc.addPage();
-      curY = 15;
+      // Bottom border
+      stroke(doc, C.lgray);
+      doc.setLineWidth(0.2);
+      doc.line(ML, y + rowH, ML + CW, y + rowH);
+
+      // Phase-colour left accent strip (2 mm wide)
+      fill(doc, pc);
+      doc.rect(ML, y, 2, rowH, "F");
+
+      // ── ID ──────────────────────────────────────────────────────────────
+      bold(doc, 9);
+      color(doc, pc);
+      doc.text(
+        m.id < 10 ? `0${m.id}` : String(m.id),
+        COL.id.x + COL.id.w - 1, y + rowH / 2 + 1.5,
+        { align: "right" }
+      );
+
+      // ── TITLE + META ────────────────────────────────────────────────────
+      const titleY = y + 5;
+      bold(doc, 8);
+      color(doc, C.navy);
+      doc.text(titleLines, COL.title.x, titleY);
+
+      const metaY = titleY + titleLines.length * 4.5;
+      normal(doc, 6.5);
+      color(doc, C.mgray);
+      doc.text(metaText, COL.title.x, metaY);
+
+      if (hasNote && m.notes) {
+        const noteY = metaY + 4;
+        normal(doc, 6);
+        color(doc, C.amber);
+        const nLines = doc.splitTextToSize(`↳ ${m.notes}`, COL.title.w - 2);
+        doc.text(nLines[0], COL.title.x, noteY);
+      }
+
+      // ── PROGRESS BAR ────────────────────────────────────────────────────
+      const done    = m.subTasks.filter((t) => t.completed).length;
+      const total   = m.subTasks.length;
+      const barW    = COL.bar.w - 14;  // 30mm for bar, 14mm for % label
+      const barH    = 3.5;
+      const barX    = COL.bar.x;
+      const barY    = y + rowH / 2 - barH / 2 - 2;
+      const fg      = statusFg(m.status);
+
+      progressBar(doc, barX, barY, barW, barH, m.progress, fg);
+
+      // % text (right of bar)
+      bold(doc, 9);
+      color(doc, fg);
+      doc.text(`${m.progress}%`, barX + barW + 1, barY + barH - 0.3, { align: "left" });
+
+      // tasks count (below bar)
+      normal(doc, 6);
+      color(doc, C.mgray);
+      doc.text(`${done}/${total} tasks`, barX, barY + barH + 3.5);
+
+      // ── STATUS BADGE ────────────────────────────────────────────────────
+      const sFg    = statusFg(m.status);
+      const sBg    = statusBg(m.status);
+      const badge  = statusText(m.status);
+      const bdgW   = 24, bdgH = 6.5;
+      const bdgX   = COL.status.x + (COL.status.w - bdgW) / 2;
+      const bdgY   = y + rowH / 2 - bdgH / 2;
+
+      fill(doc, sBg);
+      roundRect(doc, bdgX, bdgY, bdgW, bdgH, 3.2);
+      bold(doc, 6.5);
+      color(doc, sFg);
+      doc.text(badge, bdgX + bdgW / 2, bdgY + 4.3, { align: "center" });
+
+      y += rowH;
     }
+
+    y += 4; // gap between phases
   }
 
-  /* ── FOOTER ── */
-  const footerY = PH - 10;
-  drawGradientBar(doc, 0, footerY - 1, PW, 12);
-  doc.setFontSize(7);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(255, 255, 255);
-  doc.text(
-    `Hexa Finance Automation Tracker  ·  Generated ${new Date().toLocaleDateString("en-GB")}  ·  Confidential`,
-    PW / 2, footerY + 5,
-    { align: "center" }
-  );
+  // ── FOOTERS (go back and stamp every page with correct total) ─────────────
+  // jsPDF doesn't allow editing previous pages easily, so we draw all footers
+  // during the main pass with placeholder totals, and then re-draw on the last page.
+  // Simplest: just stamp all pages at the end using getNumberOfPages().
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    drawFooter(doc, p, totalPages);
+  }
 
-  const filename = `hexa-automation-progress-${new Date().toISOString().slice(0, 10)}.pdf`;
-  doc.save(filename);
+  doc.save(`hexa-automation-progress-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
