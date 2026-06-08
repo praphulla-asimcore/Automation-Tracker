@@ -1,6 +1,7 @@
 "use client";
 
-import { Settings2, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { Settings2, RefreshCw, FileText, Loader2 } from "lucide-react";
 
 interface HeaderProps {
   overallProgress: number;
@@ -10,9 +11,20 @@ interface HeaderProps {
 }
 
 export default function Header({ overallProgress, lastSaved, onOpenSettings }: HeaderProps) {
+  const [downloadingPlan, setDownloadingPlan] = useState(false);
   const daysLeft = Math.ceil(
     (new Date("2026-07-07").getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
   );
+
+  const handleDownloadPlan = async () => {
+    setDownloadingPlan(true);
+    try {
+      const { generatePlanPDF } = await import("@/lib/generate-plan-pdf");
+      generatePlanPDF();
+    } finally {
+      setDownloadingPlan(false);
+    }
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
@@ -70,6 +82,15 @@ export default function Header({ overallProgress, lastSaved, onOpenSettings }: H
                 <span>Saved {lastSaved.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
             )}
+            <button
+              onClick={handleDownloadPlan}
+              disabled={downloadingPlan}
+              title="Download Automation Plan (PDF)"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 transition-all disabled:opacity-60"
+            >
+              {downloadingPlan ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              <span className="hidden sm:inline">{downloadingPlan ? "Generating…" : "Plan PDF"}</span>
+            </button>
             <button
               onClick={onOpenSettings}
               className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-all"
