@@ -9,7 +9,11 @@ import PhaseSection from "@/components/PhaseSection";
 import UpdateDirectorModal from "@/components/UpdateDirectorModal";
 import SettingsModal from "@/components/SettingsModal";
 
-const STORAGE_KEY = "hexa-automation-tracker-v1";
+// Bumped to v2: the module/subtask structure was realigned to the Malaysia-first
+// plan, so older saved copies (with Indonesia/Myanmar statutory items) must not
+// override the new seed data.
+const STORAGE_KEY = "hexa-automation-tracker-v2";
+const LEGACY_STORAGE_KEYS = ["hexa-automation-tracker-v1"];
 const SETTINGS_KEY = "hexa-automation-settings-v2";
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -33,6 +37,7 @@ export default function Home() {
   // Load from localStorage
   useEffect(() => {
     try {
+      LEGACY_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) setModules(JSON.parse(saved));
       const savedSettings = localStorage.getItem(SETTINGS_KEY);
