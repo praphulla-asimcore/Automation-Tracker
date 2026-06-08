@@ -36,8 +36,8 @@ const PHASE_NAME: Record<number, string> = {
   4: "Phase 4 — Consolidation",
 };
 const PHASE_DATE: Record<number, string> = {
-  1: "3–9 Jun 2026",
-  2: "10–17 Jun 2026",
+  1: "3–10 Jun 2026",
+  2: "11–17 Jun 2026",
   3: "18–24 Jun 2026",
   4: "25 Jun–7 Jul 2026",
 };
