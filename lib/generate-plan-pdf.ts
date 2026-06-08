@@ -7,6 +7,8 @@
  * slide's content ever overflows a single page.
  */
 import jsPDF from "jspdf";
+import { INITIAL_MODULES } from "./data";
+import { Module } from "./types";
 
 // ─── palette ──────────────────────────────────────────────────────────────
 type RGB = [number, number, number];
@@ -162,6 +164,106 @@ function twoColTable(
   return y;
 }
 
+// ─── checkbox glyph (build-plan checklist) ───────────────────────────────────
+function checkbox(doc: jsPDF, x: number, baseY: number, done: boolean) {
+  const s = 2.5;
+  const top = baseY - s + 0.3;
+  doc.setLineWidth(0.3);
+  if (done) {
+    fill(doc, C.green);
+    stroke(doc, C.green);
+    doc.roundedRect(x, top, s, s, 0.5, 0.5, "FD");
+    stroke(doc, C.white);
+    doc.setLineWidth(0.45);
+    doc.line(x + 0.55, top + s * 0.55, x + 1.0, top + s - 0.5);
+    doc.line(x + 1.0, top + s - 0.5, x + s - 0.4, top + 0.55);
+  } else {
+    stroke(doc, C.faint);
+    doc.roundedRect(x, top, s, s, 0.5, 0.5, "S");
+  }
+}
+
+// ─── build-plan slide: Dates | titled checklist (sourced from data.ts) ───────
+function buildPlanTable(
+  doc: jsPDF,
+  state: { page: number },
+  title: string,
+  startY: number,
+  mods: Module[],
+) {
+  const col1W = 32;
+  const c1x = ML;
+  const c2x = ML + col1W + 4;
+  const c2w = CW - col1W - 4;
+  const titleLineH = 4.2;
+  const itemLineH = 3.9;
+  const padY = 2.6;
+  const indent = 5;
+
+  const drawBand = (y: number) => {
+    fill(doc, C.band);
+    doc.rect(ML, y, CW, 7.5, "F");
+    bold(doc, 8.5);
+    color(doc, C.white);
+    doc.text("Dates", c1x + 2.5, y + 5.1);
+    doc.text("Module & What Gets Built (Malaysia)", c2x + 1, y + 5.1);
+    return y + 7.5;
+  };
+
+  let y = drawBand(startY);
+  let alt = false;
+
+  for (const m of mods) {
+    bold(doc, 8.5);
+    const dateLines = doc.splitTextToSize(m.dates, col1W - 4);
+    const titleLines = doc.splitTextToSize(m.title, c2w - 3);
+    normal(doc, 7.5);
+    const itemWrap = m.subTasks.map((t) => doc.splitTextToSize(t.title, c2w - indent - 4));
+    const itemLineCount = itemWrap.reduce((s, l) => s + l.length, 0);
+
+    const rowH = padY * 2 + titleLines.length * titleLineH + 1.5 + itemLineCount * itemLineH;
+
+    if (y + rowH > TABLE_BOTTOM) {
+      footer(doc, state.page);
+      doc.addPage();
+      state.page++;
+      const ny = slideHeader(doc, `${title} (cont.)`);
+      y = drawBand(ny);
+      alt = false;
+    }
+
+    if (alt) { fill(doc, C.altRow); doc.rect(ML, y, CW, rowH, "F"); }
+    alt = !alt;
+
+    stroke(doc, C.border);
+    doc.setLineWidth(0.2);
+    doc.line(ML, y + rowH, ML + CW, y + rowH);
+
+    // col 1 — dates
+    bold(doc, 8.5);
+    color(doc, C.band);
+    doc.text(dateLines, c1x + 2.5, y + padY + 3.1);
+
+    // col 2 — module title (bold), then checklist
+    let ty = y + padY + 3.1;
+    bold(doc, 8.5);
+    color(doc, C.body);
+    doc.text(titleLines, c2x + 1, ty);
+    ty += titleLines.length * titleLineH + 1.5;
+
+    normal(doc, 7.5);
+    m.subTasks.forEach((t, i) => {
+      checkbox(doc, c2x + 1, ty, t.completed);
+      color(doc, t.completed ? C.faint : C.body);
+      doc.text(itemWrap[i], c2x + 1 + indent, ty);
+      ty += itemWrap[i].length * itemLineH;
+    });
+
+    y += rowH;
+  }
+  return y;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  CONTENT
 // ════════════════════════════════════════════════════════════════════════════
@@ -199,25 +301,6 @@ const PROBLEM: Row[] = [
   { c1: "Month-end close: 6.5 weeks", c2: "HSSB/KISB April 2026 books closed 15–16 May. HCI recon still mismatched at 6:56 PM on 13 May. Bank recon and accruals incomplete morning of close day." },
   { c1: "No project P&L", c2: "Finance cannot produce P&L for Jendela (Malaysia) or Sacofa (RM 6.4m contract). Cash outflows in Excel, not in Zoho P&L format. Director asked mid-payout, answer was unavailable." },
   { c1: "Unsigned payroll report before invoice", c2: "Malaysia invoices raised without signed payroll report. Control introduced manually by Ujjwal on 12 May. Prior months' revenue trail potentially incomplete for HSSB." },
-];
-
-const BUILD_1: Row[] = [
-  { c1: "3–5 Jun\nMon–Wed", c2: "APEX: CSI Generator API integration (Ikhram). Inbound CSI data → HexaFlow. Outbound payment confirmation → CSI app. Statutory module: EPF, SOCSO, EIS, PCB/MTD, HRDF for HSSB & KISB. HexaComply Malaysia due dates and triggers corrected." },
-  { c1: "8–9 Jun\nMon–Tue", c2: "APEX go-live + end-to-end test. Full cycle: CSI upload → approval → Maybank bank file → payment posted → confirmation back to CSI app. Statutory module tested against HSSB. HexaComply Malaysia triggers verified live." },
-  { c1: "10 Jun\nWed", c2: "Internal payroll — Malaysia only. BrioHR payroll register → calculation (basic, allowances, EPF/SOCSO deductions) → HOF approval → Zoho Dr. Salary Payable / Cr. Bank auto-post → Maybank bank file generated." },
-  { c1: "11 Jun\nThu", c2: "CLEO — OPEX approval platform. PR raised → HOF review → Director approval (email token). On approval: Zoho bill created (Dr. OH Expense / Cr. AP). On payment: Zoho bill payment posted (Dr. AP / Cr. Bank). Hard gate: no PIR without signed PR. Malaysia vendors only." },
-  { c1: "12 Jun\nFri", c2: "CLEO — Loan payment sub-module. Malaysia facilities: Alliance Bank TL, HLB HP x2, CIMB WC, Maybank WC. Auto-triggered 25th each month. Dr. Interest Exp + Dr. CL Loan / Cr. Bank posted in Zoho automatically. Loan statement stored in Dropbox." },
-  { c1: "16–17 Jun\nMon–Tue", c2: "Bank reconciliation — Malaysia. Maybank statement upload (PDF/CSV) → auto-match vs Zoho transactions → unmatched flagged with reason codes → recon report generated. Target: completed by 2nd of each month automatically. HSSB and KISB accounts covered." },
-];
-
-const BUILD_2: Row[] = [
-  { c1: "18–19 Jun\nWed–Thu", c2: "ARIA — AR collection cycle + Malaysia project P&L. Auto-reminders at 7/3/1 days before due. DAR auto-generated every Monday. Live AR aging dashboard. Project P&L by Malaysia project code: Jendela, Kuching, Sacofa (RM 6.4m) — without needing to ask Paranee." },
-  { c1: "20 Jun\nFri", c2: "ARIA — Auto-invoicing to Zoho from APEX. Malaysia CSI approved + payroll report signed → invoice auto-generated in Zoho (Dr. AR / Cr. Sales) within 48 hrs. Signed payroll report is a hard gate. Fixes the unsigned-report gap for HSSB." },
-  { c1: "23–24 Jun\nMon–Tue", c2: "Fund flow dashboard — Malaysia. Entity cash ladder: HSSB and KISB. 6-week rolling forecast auto-populated from known obligations (CSI payouts, statutory, loans, overheads). T-5/T-3/T-1 payout alerts. EOR vs project fund separation enforced structurally in system." },
-  { c1: "25–26 Jun\nWed–Thu", c2: "Intercompany matrix — Malaysia. KISB–HSSB balances auto-reconciled. Elimination journals prepared. TP markup validated per Malaysia transfer pricing rules. Mismatch flagged to CFO. Last working day reconciliation enforced automatically." },
-  { c1: "27 Jun–2 Jul\nFri+Mon–Wed", c2: "Balance sheet breakdowns + accruals engine — Malaysia. AR/AP aging, advances recon, prepayments, statutory liabilities auto-populated. 8 accrual journals auto-posted on 1st and 4th: depreciation, amortization, tax provision, audit fees, COGS, WIP sales, office overheads, prepayments. Target: close in 15 working days." },
-  { c1: "3–4 Jul\nThu–Fri", c2: "Translation reserve — Malaysia entities only. HSSB and KISB both MYR functional currency so translation reserve is minimal. Build the framework now for when foreign entity consolidation begins. MFRS 121 compliant output structure in place." },
-  { c1: "7 Jul\nMon", c2: "Full Malaysia system review. End-to-end test: APEX → CLEO → ARIA → Fund Flow → Bank Recon → Accruals → Interco. One full simulated cycle. Director presentation. Sign-off before replication sprint begins." },
 ];
 
 const PLATFORM: Row[] = [
@@ -364,16 +447,18 @@ export function generatePlanPDF() {
   twoColTable(doc, state, "The Problem — Malaysia", y, "Pain Point", "Malaysia Observation / Impact", 40, PROBLEM);
   footer(doc, state.page);
 
-  // ── SLIDE 6 — BUILD PLAN PHASE 1 & 2 ────────────────────────────────────
+  // ── SLIDE 6 — BUILD PLAN PHASE 1 & 2 (checklist from data.ts) ───────────
   doc.addPage(); state.page++;
   y = slideHeader(doc, "Build Plan — Phase 1 & 2: APEX, CLEO & Controls");
-  twoColTable(doc, state, "Build Plan — Phase 1 & 2", y, "Dates", "Module & What Gets Built (Malaysia)", 34, BUILD_1);
+  buildPlanTable(doc, state, "Build Plan — Phase 1 & 2", y,
+    INITIAL_MODULES.filter((m) => m.phase === 1 || m.phase === 2));
   footer(doc, state.page);
 
-  // ── SLIDE 7 — BUILD PLAN PHASE 3 & 4 ────────────────────────────────────
+  // ── SLIDE 7 — BUILD PLAN PHASE 3 & 4 (checklist from data.ts) ───────────
   doc.addPage(); state.page++;
   y = slideHeader(doc, "Build Plan — Phase 3 & 4: ARIA, Fund Flow & Consolidation");
-  twoColTable(doc, state, "Build Plan — Phase 3 & 4", y, "Dates", "Module & What Gets Built (Malaysia)", 34, BUILD_2);
+  buildPlanTable(doc, state, "Build Plan — Phase 3 & 4", y,
+    INITIAL_MODULES.filter((m) => m.phase === 3 || m.phase === 4));
   footer(doc, state.page);
 
   // ── SLIDE 8 — PLATFORM OVERVIEW ─────────────────────────────────────────
